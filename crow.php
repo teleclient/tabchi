@@ -4,117 +4,74 @@
 
 // نیاز به کرونجاب 1 دقیقه ای
 
-ini_set('memory_limit', -1);
-//ini_set('display_errors', 0);
-//ini_set('max_execution_time', 300);
+//ini_set('memory_limit', 0);
 
+/*
 if (file_exists('session.madeline') && file_exists('update-session/session.madeline') &&
     (filesize('session.madeline') / 1024) > 10240 || time() - filectime('session.madeline') > 20)
 {
-    unlink('session.madeline.lock');
     unlink('session.madeline');
-    unlink('madeline.phar');
-    unlink('madeline.phar.version');
-    unlink('madeline.php');
-    unlink('MadelineProto.log');
-    unlink('bot.lock');
-    copy('update-session/session.madeline', 'session.madeline');
-}
-if (file_exists('session.madeline')                &&
-    file_exists('update-session/session.madeline') &&
-    (filesize('session.madeline') / 1024) > 10240)
-{
-    unlink('session.madeline.lock');
-    unlink('session.madeline');
-    unlink('madeline.phar');
-    unlink('madeline.phar.version');
-    unlink('madeline.php');
-    unlink('bot.lock');
-    unlink('MadelineProto.log');
-    copy('update-session/session.madeline', 'session.madeline');
-}
-
-/*
-function closeConnection($message = 'CrowTabchi Is Running ...')
-{
-    if (php_sapi_name() === 'cli' || isset($GLOBALS['exited'])) {
-        return;
-    }
-    @ob_end_clean();
-    header('Connection: close');
-    ignore_user_abort(true);
-    ob_start();
-    echo "$message";
-    $size = ob_get_length();
-    header("Content-Length: $size");
-    header('Content-Type: text/html');
-    ob_end_flush();
-    flush();
-    $GLOBALS['exited'] = true;
-}
-closeConnection();
-*/
-
-/*
-function shutdown_function($lock)
-{
-    try {
-        $a = fsockopen((isset($_SERVER['HTTPS']) && @$_SERVER['HTTPS'] ? 'tls' : 'tcp') . '://' .
-             @$_SERVER['SERVER_NAME'], @$_SERVER['SERVER_PORT']);
-        fwrite($a, @$_SERVER['REQUEST_METHOD'] . ' ' . @$_SERVER['REQUEST_URI'] . ' ' .
-                   @$_SERVER['SERVER_PROTOCOL'] . "\r\n" .
-                   'Host: ' . @$_SERVER['SERVER_NAME'] .
-                   "\r\n\r\n");
-        flock($lock, LOCK_UN);
-        fclose($lock);
-    } catch (Exception $v) {
-    }
-}
-register_shutdown_function('shutdown_function', $lock);
-*/
-
-/*
-if (!file_exists('bot.lock')) {
-    touch('bot.lock');
-}
-$lock = fopen('bot.lock', 'r+');
-$try = 1;
-$locked = false;
-while (!$locked) {
-    $locked = flock($lock, LOCK_EX | LOCK_NB);
-    if (!$locked) {
-        closeConnection();
-        if ($try++ >= 30) {
-            exit;
-        }
-        sleep(1);
-    }
+    if(file_exists('session.madeline.lock')) unlink('session.madeline.lock');
+    if(file_exists('madeline.phar'))         unlink('madeline.phar');
+    if(file_exists('madeline.phar.version')) unlink('madeline.phar.version');
+    if(file_exists('madeline.php'))          unlink('madeline.php');
+    if(file_exists('MadelineProto.log'))     unlink('MadelineProto.log');
+    //copy('update-session/session.madeline', 'session.madeline');
 }
 */
 
 if (!file_exists('data.json')) {
     file_put_contents('data.json', '{"autochat":{"on":"on"},"admins":{}}');
 }
-if (!is_dir('update-session')) {
-    mkdir('update-session');
-}
+//if (!is_dir('update-session')) {
+//    mkdir('update-session');
+//}
 if (!file_exists('madeline.php')) {
     copy('https://phar.madelineproto.xyz/madeline.php', 'madeline.php');
 }
 include_once 'madeline.php';
+include_once   'config.php';
+
+use \danog\MadelineProto\API;
+use \danog\MadelineProto\Logger;
 
 
 class EventHandler extends \danog\MadelineProto\EventHandler
 {
+    const CREATOR = 157887279; // ایدی عددی ران کننده ربات
+    const ADMIN   = 157887279; // ایدی عددی ادمین اصلی
+
     public function __construct($MadelineProto)
     {
         parent::__construct($MadelineProto);
     }
+    /**
+     * Called from within setEventHandler, can contain async calls for initialization of the bot
+     *
+     * @return void
+     */
+    public function onStart()
+    {
+    }
 
-    //public function onUpdateSomethingElse($update)
-    //{
-    //    yield $this->onUpdateNewMessage($update);
-    //}
+    /**
+     * Get peer(s) where to report errors
+     *
+     * @return int|string|array
+     */
+    public function getReportPeers()
+    {
+        return [];
+    }
+
+    function toJSON($var, $pretty = true) {
+        $opts = JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES;
+        $json = json_encode($var, !$pretty? $opts : $opts|JSON_PRETTY_PRINT);
+        if($json === '') {
+            $json = var_export($var, true);
+        }
+        return $json;
+    }
 
     public function onUpdateNewChannelMessage($update)
     {
@@ -123,11 +80,15 @@ class EventHandler extends \danog\MadelineProto\EventHandler
     public function onUpdateNewMessage($update)
     {
         try {
+
+            $json = $this->toJSON($update, false);
+            $this->echo($json.PHP_EOL.PHP_EOL);
+
+            /*
             if (!file_exists('update-session/session.madeline')) {
                 copy('session.madeline', 'update-session/session.madeline');
             }
-            $creator = 120684202; // ایدی عددی ران کننده ربات
-            $admin   = 120684202; // ایدی عددی ادمین اصلی
+            */
 
             $userID        = @$update['message']['from_id'];
             $msg           = @$update['message']['message'];
@@ -140,44 +101,53 @@ class EventHandler extends \danog\MadelineProto\EventHandler
             $type2         = $info['type'];
             @$data         = json_decode(file_get_contents("data.json"), true);
 
+            /*
             if (file_exists('session.madeline') && filesize('session.madeline') / 1024 > 6143) {
                 unlink('session.madeline.lock');
                 unlink('session.madeline');
                 copy('update-session/session.madeline', 'session.madeline');
                 exit(file_get_contents('http://' . $_SERVER['SERVER_NAME'] . $_SERVER['PHP_SELF']));
             }
+            */
 
-            if ($userID != $me_id) {
-                if ($msg == 'تمدید' && $userID == $creator) {
-                    copy('update-session/session.madeline', 'update-session/session.madeline2');
+            if ($userID !== $me_id) {
+                /*
+                if ($msg === 'تمدید' && $userID === self::CREATOR) {
+                    copy(  'update-session/session.madeline', 'update-session/session.madeline2');
                     unlink('update-session/session.madeline');
-                    copy('update-session/session.madeline2', 'update-session/session.madeline');
+                    copy(  'update-session/session.madeline2', 'update-session/session.madeline');
                     unlink('update-session/session.madeline2');
                     yield $MadelineProto->messages->sendMessage([
                         'peer'    => $chatID,
                         'message' => '⚡️ ربات برای 30 روز دیگر شارژ شد'
                     ]);
                 }
-                if ((time() - filectime('update-session/session.madeline')) > 2505600) {
-                    if ($userID == $admin || isset($data['admins'][$userID])) {
+                */
+
+                if (false /*(time() - filectime('update-session/session.madeline')) > 2505600*/) {
+                    /*
+                    if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
                         yield $MadelineProto->messages->sendMessage([
                             'peer'    => $chatID,
                             'message' => '❗️اخطار: مهلت استفاده شما از این ربات به اتمام رسیده❗️'
                         ]);
                     }
-                } else {
-                    if ($type2 == 'channel' || $userID == $admin || isset($data['admins'][$userID])) {
+                    */
+                }
+                else {
+                    if ($type2 === 'channel' || $userID === self::ADMIN || isset($data['admins'][$userID])) {
                         if (strpos($msg, 't.me/joinchat/') !== false) {
                             $a = explode('t.me/joinchat/', "$msg")[1];
                             $b = explode("\n", "$a")[0];
                             try {
-                                yield $MadelineProto->channels->joinChannel(['channel' => "https://t.me/joinchat/$b"]);
+                                yield $MadelineProto->channels->joinChannel([
+                                    'channel' => "https://t.me/joinchat/$b"
+                                ]);
                             } catch (Exception $p) {
                             } catch (\danog\MadelineProto\RPCErrorException $p) {
                             }
                         }
                     }
-
                     if (isset($update['message']['reply_markup']['rows'])) {
                         if ($type2 == 'supergroup') {
                             foreach ($update['message']['reply_markup']['rows'] as $row) {
@@ -187,7 +157,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             }
                         }
                     }
-
+                    /*
                     if ($chatID == 777000) {
                         @$a = str_replace(0, '۰', $msg);
                         @$a = str_replace(1, '۱', $a);
@@ -200,7 +170,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         @$a = str_replace(8, '۸', $a);
                         @$a = str_replace(9, '۹', $a);
                         yield $MadelineProto->messages->sendMessage([
-                            'peer'    => $admin,
+                            'peer'    => self::ADMIN,
                             'message' => "$a"
                         ]);
                         yield $MadelineProto->messages->deleteHistory([
@@ -210,8 +180,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             'max_id'     => $msg_id
                         ]);
                     }
-
-                    if ($userID == $admin) {
+                    */
+                    if ($userID == self::ADMIN) {
                         if (preg_match("/^[#\!\/](addadmin) (.*)$/", $msg)) {
                             preg_match("/^[#\!\/](addadmin) (.*)$/", $msg, $text1);
                             $id = $text1[2];
@@ -225,7 +195,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             } else {
                                 yield $MadelineProto->messages->sendMessage([
                                     'peer'    => $chatID,
-                                    'message' => "این دیوث از قبل ادمین بود :/"
+                                    'message' => "این شخص از قبل ادمین بود :/"
                                 ]);
                             }
                         }
@@ -239,11 +209,10 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
                         if (preg_match("/^[\/\#\!]?(adminlist)$/i", $msg)) {
                             if (count($data['admins']) > 0) {
-                                $txxxt = "لیست ادمین ها :
-";
+                                $txxxt = "لیست ادمین ها :<br>";
                                 $counter = 1;
                                 foreach ($data['admins'] as $k) {
-                                    $txxxt .= "$counter: <code>$k</code>\n";
+                                    $txxxt .= "$counter: <code>$k</code><br>";
                                     $counter++;
                                 }
                                 yield $MadelineProto->messages->sendMessage([
@@ -260,8 +229,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
                     }
 
-                    if ($userID == $admin || isset($data['admins'][$userID])) {
-                        if ($msg == '/restart') {
+                    if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
+                        if ($msg === '/restart') {
                             yield $MadelineProto->messages->deleteHistory([
                                 'just_clear' => true,
                                 'revoke'     => true,
@@ -272,23 +241,26 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                 'peer'    => $chatID,
                                 'message' => '♻️ ربات دوباره راه اندازی شد.'
                             ]);
-                            // exit;
                             yield $this->restart();
                         }
 
-                        if ($msg == 'پاکسازی') {
+                        if ($msg === 'پاکسازی') {
                             yield $MadelineProto->messages->sendMessage([
-                                'peer'    => $chatID, 
+                                'peer'    => $chatID,
                                 'message' => 'لطفا کمی صبر کنید ...'
                             ]);
                             $all = yield $MadelineProto->get_dialogs();
                             foreach ($all as $peer) {
                                 $type = yield $MadelineProto->get_info($peer);
-                                if ($type['type'] == 'supergroup') {
-                                    $info = yield $MadelineProto->channels->getChannels(['id' => [$peer]]);
+                                if ($type['type'] === 'supergroup') {
+                                    $info = yield $MadelineProto->channels->getChannels([
+                                        'id' => [$peer]
+                                    ]);
                                     @$banned = $info['chats'][0]['banned_rights']['send_messages'];
                                     if ($banned == 1) {
-                                        yield $MadelineProto->channels->leaveChannel(['channel' => $peer]);
+                                        yield $MadelineProto->channels->leaveChannel([
+                                            'channel' => $peer
+                                        ]);
                                     }
                                 }
                             }
@@ -299,7 +271,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             ]);
                         }
 
-                        if ($msg == 'انلاین' || 
+                        if ($msg == 'انلاین' ||
                             $msg == 'تبچی' || $msg == '!ping' || $msg == '#ping' || $msg == 'ربات' ||
                             $msg == 'ping' || $msg == '/ping') {
                             yield $MadelineProto->messages->sendMessage([
@@ -328,7 +300,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                 'message'         =>
 "💚 مشخصات من
 
-👑 ادمین‌اصلی: [$admin](tg://user?id=$admin)
+👑 ادمین‌اصلی: [self::ADMIN](tg://user?id=self::ADMIN)
 👤 نام: $name
 #⃣ ایدی‌عددیم: `$me_id`
 📞 شماره‌تلفنم: `$phone`
@@ -338,10 +310,10 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if ($msg == 'امار' || $msg == 'آمار' || $msg == 'stats') {
-                            $day = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60 / 24;
-                            $day = round($day, 0);
-                            $hour = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60;
-                            $hour = round($hour, 0);
+                            //$day = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60 / 24;
+                            //$day = round($day, 0);
+                            //$hour = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60;
+                            //$hour = round($hour, 0);
                             yield $MadelineProto->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'لطفا کمی صبر کنید...',
@@ -354,8 +326,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             } else {
                                 $sat = '❌';
                             }
-                            $mem_total = 'NotAccess!';
-                            $CpuCores = 'NotAccess!';
+                            $mem_total = 'NoAccess!';
+                            $CpuCores  = 'NoAccess!';
                             try {
                                 if (strpos(@$_SERVER['SERVER_NAME'], '000webhost') === false) {
                                     if (strpos(PHP_OS, 'L') !== false || strpos(PHP_OS, 'l') !== false) {
@@ -365,10 +337,10 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                         if ($c != 0 && $c != '') {
                                             $mem_total = round($c, 1) . 'GB';
                                         } else {
-                                            $mem_total = 'NotAccess!';
+                                            $mem_total = 'NoAccess!';
                                         }
                                     } else {
-                                        $mem_total = 'NotAccess!';
+                                        $mem_total = 'NoAccess!';
                                     }
                                     if (strpos(PHP_OS, 'L') !== false || strpos(PHP_OS, 'l') !== false) {
                                         $a = file_get_contents("/proc/cpuinfo");
@@ -378,10 +350,10 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                         if ($b != 0 && $b != '') {
                                             $CpuCores = $b;
                                         } else {
-                                            $CpuCores = 'NotAccess!';
+                                            $CpuCores = 'NoAccess!';
                                         }
                                     } else {
-                                        $CpuCores = 'NotAccess!';
+                                        $CpuCores = 'NoAccess!';
                                     }
                                 }
                             } catch (Exception $f) {
@@ -394,26 +366,25 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             $all      = $gps + $supergps + $pvs;
                             yield $MadelineProto->messages->sendMessage([
                                 'peer'    => $chatID,
-                                'message' =>
-"📊 Stats OghabTabchi :
-
-🔻 All : $all
-→
-👥 SuperGps + Channels : $supergps
-→
-👣 NormalGroups : $gps
-→
-📩 Users : $pvs
-→
-☎️ AutoChat : $sat
-→
-☀️ Trial : $day day Or $hour Hour
-→
-🎛 CPU Cores : $CpuCores
-→
-🔋 MemTotal : $mem_total
-→
-♻️ MemUsage by this bot : $mem_using"
+                                'message' =>"📊 Stats OghabTabchi :<br>".
+                                            "<br>".
+                                            "🔻 All : $all<br>".
+                                            "→<br>".
+                                            "👥 SuperGps + Channels : $supergps<br>".
+                                            "→<br>".
+                                            "👣 NormalGroups : $gps<br>".
+                                            "→<br>".
+                                            "📩 Users : $pvs<br>".
+                                            "→<br>".
+                                            "☎️ AutoChat : $sat<br>".
+                                            "→<br>".
+                                          //"☀️ Trial : $day day Or $hour Hour<br>".
+                                          //"→<br>".
+                                            "🎛 CPU Cores : $CpuCores<br>".
+                                            "→<br>".
+                                            "🔋 MemTotal : $mem_total<br>".
+                                            "→<br>".
+                                            "♻️ MemUsage by this bot : $mem_using"
                             ]);
                             if ($supergps > 400 || $pvs > 1500) {
                                 yield $MadelineProto->messages->sendMessage([
@@ -952,7 +923,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             }
                         }
                     }
-                    if ($userID == $admin || isset($data['admins'][$userID])) {
+                    if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
                         yield $MadelineProto->messages->deleteHistory([
                             'just_clear' => true,
                             'revoke'     => false,
@@ -960,7 +931,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             'max_id'     => $msg_id
                         ]);
                     }
-                    if ($userID == $admin) {
+                    /*
+                    if ($userID === self::ADMIN) {
                         if (!file_exists('true') && file_exists('session.madeline') &&
                             filesize('session.madeline') / 1024 <= 4000)
                         {
@@ -969,6 +941,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             copy('session.madeline', 'update-session/session.madeline');
                         }
                     }
+                    */
                 }
             }
         } catch (Exception $e) {
@@ -979,15 +952,20 @@ class EventHandler extends \danog\MadelineProto\EventHandler
     }
 }
 
-$settings['logger'       ]['logger']                       = 0;
-$settings['serialization']['serialization_interval']       = 1;
+if (file_exists('MadelineProto.log')) {unlink('MadelineProto.log');}
+$settings['logger']['logger_level'] = Logger::ULTRA_VERBOSE;
+$settings['logger']['logger']       = Logger::FILE_LOGGER;
+$settings['logger']['max_size']     = 1 * 1024 * 1024;
+$settings['serialization']['serialization_interval']       = 30;
 $settings['serialization']['cleanup_before_serialization'] = true;
+$settings['app_info']['api_id']   = $GLOBALS["API_ID"];   // 839407;
+$settings['app_info']['api_hash'] = $GLOBALS["API_HASH"]; // '0a310f9d03f51e8aa00d9262ef55d62e';
 
-$MadelineProto = new \danog\MadelineProto\API('session.madeline', $settings);
+$MadelineProto = new API('session.madeline', $settings);
 $MadelineProto->async(true);
 
-$MadelineProto->start();
 $MadelineProto->loop(function () use ($MadelineProto) {
+    yield $MadelineProto->start();
     yield $MadelineProto->setEventHandler('\EventHandler');
 });
 
