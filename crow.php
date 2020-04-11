@@ -78,69 +78,31 @@ class EventHandler extends \danog\MadelineProto\EventHandler
         }
     }
 
-    function parseUpdate ($update) {
+    function parseUpdate($update)
+    {
+        @$info = [
+            'to' => yield $this->getInfo($update['message']['to_id'], ['queue' => 'info_queue']),
+            'from' => yield $this->getInfo($update['message']['from_id'], ['queue' => 'info_queue'])
+        ];
         $result = [
-            'chatID'       => null,
-            'userID'       => null,
-            'msgID'        => null,
-            'type'         => null,
-            'name'         => null,
-            'username'     => null,
-            'chatusername' => null,
-            'title'        => null,
-            'msg'          => null,
-            'info'         => null,
+            'chatID'       => (@$info['to']['User']['self']) ? @$update['message']['from_id'] : @$info['to']['bot_api_id'],
+            'userID'       => @$update['message']['from_id'],
+            'msgID'        => @$update['message']['id'],
+            'type'         => (@$info['to']['type'] == 'chat') ? 'chat' : @$info['to']['type'],
+            'name'         => @$info['from']['User']['first_name'],
+            'username'     => @$info['from']['User']['username'],
+            'chatusername' => @$info['to']['Chat']['username'],
+            'title'        => @$info['to']['Chat']['title'],
+            'msg'          => @$update['message']['message'],
+            'info'         => @$info,
             'update'       => $update
         ];
         //try {
-            if (isset($update['message'])) {
-                if (isset($update['message']['from_id'])) {
-                    $result['userID'] = $update['message']['from_id'];
-                }
-                if (isset($update['message']['id'])) {
-                    $result['msgID'] = $update['message']['id'];
-                }
-                if (isset($update['message']['message'])) {
-                    $result['msg'] = $update['message']['message'];
-                }
-                if (isset($update['message']['to_id'])) {
-                    $result['info']['to'] = yield $this->getInfo($update['message']['to_id'], ['queue' => 'info_queue']);
-                    Tools::wait($result['info']['to']);
-                }
-                if (isset($result['info']['to']['bot_api_id'])) {
-                    $result['chatID'] = $result['info']['to']['bot_api_id'];
-                }
-                if (isset($result['info']['to']['type'])) {
-                    $result['type'] = $result['info']['to']['type'];
-                }
-                if (isset($result['userID'])) {
-                    $result['info']['from'] = yield $this->getInfo($result['userID'], ['queue' => 'info_queue']);
-                }
-                if (isset($result['info']['to']['User']['self']) && isset($result['userID']) && $result['info']['to']['User']['self']) {
-                    $result['chatID'] = $result['userID'];
-                }
-                if (isset($result['type']) && $result['type'] == 'chat') {
-                    $result['type'] = 'group';
-                }
-                if (isset($result['info']['from']['User']['first_name'])) {
-                    $result['name'] = $result['info']['from']['User']['first_name'];
-                }
-                if (isset($result['info']['to']['Chat']['title'])) {
-                    $result['title'] = $result['info']['to']['Chat']['title'];
-                }
-                if (isset($result['info']['from']['User']['username'])) {
-                    $result['username'] = $result['info']['from']['User']['username'];
-                }
-                if (isset($result['info']['to']['Chat']['username'])) {
-                    $result['chatusername'] = $result['info']['to']['Chat']['username'];
-                }
-            }
         //} catch (\Throwable $e) {
         //    $$this->error($e);
         //}
         return $result;
     }
-
     public function onUpdateNewChannelMessage($update)
     {
         yield $this->onUpdateNewMessage($update);
@@ -182,7 +144,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                 }
                 else {
                     yield $this->echo('I am here'.PHP_EOL);
-                    
+
                     if ($type === 'channel' || $userID === self::ADMIN || isset($data['admins'][$userID])) {
                         if (strpos($msg, 't.me/joinchat/') !== false) {
                             $a = explode('t.me/joinchat/', "$msg")[1];
@@ -208,16 +170,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                     }
 
                     if ($chatID == 777000) {
-                        @$a = str_replace(0, '۰', $msg);
-                        @$a = str_replace(1, '۱', $a);
-                        @$a = str_replace(2, '۲', $a);
-                        @$a = str_replace(3, '۳', $a);
-                        @$a = str_replace(4, '۴', $a);
-                        @$a = str_replace(5, '۵', $a);
-                        @$a = str_replace(6, '۶', $a);
-                        @$a = str_replace(7, '۷', $a);
-                        @$a = str_replace(8, '۸', $a);
-                        @$a = str_replace(9, '۹', $a);
+                        @$a = str_replace(range(0,9), ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'], $msg);
                         yield $this->messages->sendMessage([
                             'peer'    => self::ADMIN,
                             'message' => "$a"
@@ -428,7 +381,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                             "→<br>".
                                             "🔋 MemTotal : $mem_total<br>".
                                             "→<br>".
-                                            "♻️ MemUsage by this bot : $mem_using"
+                                            "♻️ MemUsage by this bot : $mem_using",
+                                'parse_mode' => 'html'
                             ]);
                             if ($supergps > 400 || $pvs > 1500) {
                                 yield $this->messages->sendMessage([
@@ -519,7 +473,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                             "——————<br>".
                                             "<code>/adminlist`<br>".
                                             "📃 لیست همه ادمین ها",
-                                'parse_mode' => 'markdown'
+                                'parse_mode' => 'html'
                             ]);
                         }
 
