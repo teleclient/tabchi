@@ -1,5 +1,7 @@
 /vendor/
 config.php
+*.zip
+cleanmad.php
 
 vendor/
 composer.lock
@@ -18,3 +20,4 @@ madeline.phar.version
 
 sourcehome.php
 data.json
+crow_ORIGINAL.php

@@ -4,28 +4,9 @@
 
 // نیاز به کرونجاب 1 دقیقه ای
 
-//ini_set('memory_limit', 0);
-
-/*
-if (file_exists('session.madeline') && file_exists('update-session/session.madeline') &&
-    (filesize('session.madeline') / 1024) > 10240 || time() - filectime('session.madeline') > 20)
-{
-    unlink('session.madeline');
-    if(file_exists('session.madeline.lock')) unlink('session.madeline.lock');
-    if(file_exists('madeline.phar'))         unlink('madeline.phar');
-    if(file_exists('madeline.phar.version')) unlink('madeline.phar.version');
-    if(file_exists('madeline.php'))          unlink('madeline.php');
-    if(file_exists('MadelineProto.log'))     unlink('MadelineProto.log');
-    //copy('update-session/session.madeline', 'session.madeline');
-}
-*/
-
 if (!file_exists('data.json')) {
     file_put_contents('data.json', '{"autochat":{"on":"on"},"admins":{}}');
 }
-//if (!is_dir('update-session')) {
-//    mkdir('update-session');
-//}
 if (!file_exists('madeline.php')) {
     copy('https://phar.madelineproto.xyz/madeline.php', 'madeline.php');
 }
@@ -34,16 +15,18 @@ include_once   'config.php';
 
 use \danog\MadelineProto\API;
 use \danog\MadelineProto\Logger;
+use \danog\MadelineProto\Tools;
 
 
 class EventHandler extends \danog\MadelineProto\EventHandler
 {
     const CREATOR = 157887279; // ایدی عددی ران کننده ربات
     const ADMIN   = 157887279; // ایدی عددی ادمین اصلی
+    const SUDO    = 157887279; // Tech Suppurt person
 
-    public function __construct($MadelineProto)
+    public function __construct($mp)
     {
-        parent::__construct($MadelineProto);
+        parent::__construct($mp);
     }
     /**
      * Called from within setEventHandler, can contain async calls for initialization of the bot
@@ -52,6 +35,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
      */
     public function onStart()
     {
+        return;
     }
 
     /**
@@ -61,7 +45,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
      */
     public function getReportPeers()
     {
-        return [];
+        return [/*self::SUDO*/];
     }
 
     function toJSON($var, $pretty = true) {
@@ -73,83 +57,148 @@ class EventHandler extends \danog\MadelineProto\EventHandler
         return $json;
     }
 
+    function error ($e, $chatID = NULL) {
+        $this->log($e, [], 'error');
+        if (isset($chatID) && $this->settings['send_errors']) {
+            try {
+                $this->messages->sendMessage(
+                    [
+                        'peer'      => $chatID,
+                        'message'   => '<b>' . $this->strings['error'] . ''.
+                                       '</b><code>' . $e->getMessage() . '</code>',
+                        'parse_mode' => 'HTML'
+                    ],
+                    [
+                        'async' => true
+                    ]
+                );
+            }
+            catch (\Throwable $e) {
+            }
+        }
+    }
+
+    function parseUpdate ($update) {
+        $result = [
+            'chatID'       => null,
+            'userID'       => null,
+            'msgID'        => null,
+            'type'         => null,
+            'name'         => null,
+            'username'     => null,
+            'chatusername' => null,
+            'title'        => null,
+            'msg'          => null,
+            'info'         => null,
+            'update'       => $update
+        ];
+        //try {
+            if (isset($update['message'])) {
+                if (isset($update['message']['from_id'])) {
+                    $result['userID'] = $update['message']['from_id'];
+                }
+                if (isset($update['message']['id'])) {
+                    $result['msgID'] = $update['message']['id'];
+                }
+                if (isset($update['message']['message'])) {
+                    $result['msg'] = $update['message']['message'];
+                }
+                if (isset($update['message']['to_id'])) {
+                    $result['info']['to'] = yield $this->getInfo($update['message']['to_id'], ['queue' => 'info_queue']);
+                    Tools::wait($result['info']['to']);
+                }
+                if (isset($result['info']['to']['bot_api_id'])) {
+                    $result['chatID'] = $result['info']['to']['bot_api_id'];
+                }
+                if (isset($result['info']['to']['type'])) {
+                    $result['type'] = $result['info']['to']['type'];
+                }
+                if (isset($result['userID'])) {
+                    $result['info']['from'] = yield $this->getInfo($result['userID'], ['queue' => 'info_queue']);
+                }
+                if (isset($result['info']['to']['User']['self']) && isset($result['userID']) && $result['info']['to']['User']['self']) {
+                    $result['chatID'] = $result['userID'];
+                }
+                if (isset($result['type']) && $result['type'] == 'chat') {
+                    $result['type'] = 'group';
+                }
+                if (isset($result['info']['from']['User']['first_name'])) {
+                    $result['name'] = $result['info']['from']['User']['first_name'];
+                }
+                if (isset($result['info']['to']['Chat']['title'])) {
+                    $result['title'] = $result['info']['to']['Chat']['title'];
+                }
+                if (isset($result['info']['from']['User']['username'])) {
+                    $result['username'] = $result['info']['from']['User']['username'];
+                }
+                if (isset($result['info']['to']['Chat']['username'])) {
+                    $result['chatusername'] = $result['info']['to']['Chat']['username'];
+                }
+            }
+        //} catch (\Throwable $e) {
+        //    $$this->error($e);
+        //}
+        return $result;
+    }
+
     public function onUpdateNewChannelMessage($update)
     {
         yield $this->onUpdateNewMessage($update);
     }
     public function onUpdateNewMessage($update)
     {
-        try {
+        //try {
+            $parsedUpd = yield $this->parseUpdate($update);
+            yield $this->logger(PHP_EOL.$this->toJSON($parsedUpd, true));
 
-            $json = $this->toJSON($update, false);
-            $this->echo($json.PHP_EOL.PHP_EOL);
+            $chatID = $parsedUpd['chatID'];
+            $userID = $parsedUpd['userID'];
+            $msg    = $parsedUpd['msg'];
+            $msgID  = $parsedUpd['msgID'];
+            $type   = $parsedUpd['type']; //'user', supergroup', 'channel'
 
-            /*
-            if (!file_exists('update-session/session.madeline')) {
-                copy('session.madeline', 'update-session/session.madeline');
-            }
-            */
+            $me        = yield $this->get_self();
+            $meID      = $me['id'];
+            $firstName = $me['first_name'];
+            $phone     = '+'. $me['phone'];
 
-            $userID        = @$update['message']['from_id'];
-            $msg           = @$update['message']['message'];
-            $msg_id        =  $update['message']['id'];
-            $MadelineProto = $this;
-            $me            = yield $MadelineProto->get_self();
-            $me_id         = $me['id'];
-            $info          = yield $MadelineProto->get_info($update);
-            $chatID        = $info['bot_api_id'];
-            $type2         = $info['type'];
-            @$data         = json_decode(file_get_contents("data.json"), true);
+            $data      = json_decode(file_get_contents("data.json"), true);
 
-            /*
-            if (file_exists('session.madeline') && filesize('session.madeline') / 1024 > 6143) {
-                unlink('session.madeline.lock');
-                unlink('session.madeline');
-                copy('update-session/session.madeline', 'session.madeline');
-                exit(file_get_contents('http://' . $_SERVER['SERVER_NAME'] . $_SERVER['PHP_SELF']));
-            }
-            */
+            $msgFront  = substr(str_replace(array("\r", "\n"), '<br>', ($update['message']['message']??'')), 0, 60);
+            $msgDetail = 'chatID:' . $chatID . '/' . $msgID . '  ' .
+                          $update['_'] . '/' . $update['pts'] . '  ' .
+                          $type . ':[' . $parsedUpd['title'] . ']  ' .
+                          'msg:[' . $msgFront . ']';
+            yield $this->echo($msgDetail.PHP_EOL);
 
-            if ($userID !== $me_id) {
-                /*
-                if ($msg === 'تمدید' && $userID === self::CREATOR) {
-                    copy(  'update-session/session.madeline', 'update-session/session.madeline2');
-                    unlink('update-session/session.madeline');
-                    copy(  'update-session/session.madeline2', 'update-session/session.madeline');
-                    unlink('update-session/session.madeline2');
-                    yield $MadelineProto->messages->sendMessage([
-                        'peer'    => $chatID,
-                        'message' => '⚡️ ربات برای 30 روز دیگر شارژ شد'
-                    ]);
-                }
-                */
-
+            if (true/*$userID !== $meID*/) {
                 if (false /*(time() - filectime('update-session/session.madeline')) > 2505600*/) {
-                    /*
                     if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
-                        yield $MadelineProto->messages->sendMessage([
+                        yield $this->messages->sendMessage([
                             'peer'    => $chatID,
                             'message' => '❗️اخطار: مهلت استفاده شما از این ربات به اتمام رسیده❗️'
                         ]);
                     }
-                    */
                 }
                 else {
-                    if ($type2 === 'channel' || $userID === self::ADMIN || isset($data['admins'][$userID])) {
+                    yield $this->echo('I am here'.PHP_EOL);
+                    
+                    if ($type === 'channel' || $userID === self::ADMIN || isset($data['admins'][$userID])) {
                         if (strpos($msg, 't.me/joinchat/') !== false) {
                             $a = explode('t.me/joinchat/', "$msg")[1];
                             $b = explode("\n", "$a")[0];
-                            try {
-                                yield $MadelineProto->channels->joinChannel([
+                            //try {
+                                yield $this->channels->joinChannel([
                                     'channel' => "https://t.me/joinchat/$b"
                                 ]);
-                            } catch (Exception $p) {
-                            } catch (\danog\MadelineProto\RPCErrorException $p) {
-                            }
+                            //} catch (Exception $p) {
+                            //} catch (\danog\MadelineProto\RPCErrorException $p) {
+                            //}
                         }
                     }
+
                     if (isset($update['message']['reply_markup']['rows'])) {
-                        if ($type2 == 'supergroup') {
+                        if ($type == 'supergroup') {
                             foreach ($update['message']['reply_markup']['rows'] as $row) {
                                 foreach ($row['buttons'] as $button) {
                                     yield $button->click();
@@ -157,7 +206,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             }
                         }
                     }
-                    /*
+
                     if ($chatID == 777000) {
                         @$a = str_replace(0, '۰', $msg);
                         @$a = str_replace(1, '۱', $a);
@@ -169,18 +218,18 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         @$a = str_replace(7, '۷', $a);
                         @$a = str_replace(8, '۸', $a);
                         @$a = str_replace(9, '۹', $a);
-                        yield $MadelineProto->messages->sendMessage([
+                        yield $this->messages->sendMessage([
                             'peer'    => self::ADMIN,
                             'message' => "$a"
                         ]);
-                        yield $MadelineProto->messages->deleteHistory([
+                        yield $this->messages->deleteHistory([
                             'just_clear' => true,
                             'revoke'     => true,
                             'peer'       => $chatID,
-                            'max_id'     => $msg_id
+                            'max_id'     => $msgID
                         ]);
                     }
-                    */
+
                     if ($userID == self::ADMIN) {
                         if (preg_match("/^[#\!\/](addadmin) (.*)$/", $msg)) {
                             preg_match("/^[#\!\/](addadmin) (.*)$/", $msg, $text1);
@@ -188,12 +237,12 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             if (!isset($data['admins'][$id])) {
                                 $data['admins'][$id] = $id;
                                 file_put_contents("data.json", json_encode($data));
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '🙌🏻 ادمین جدید اضافه شد'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => "این شخص از قبل ادمین بود :/"
                                 ]);
@@ -202,7 +251,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         if (preg_match("/^[\/\#\!]?(clean admins)$/i", $msg)) {
                             $data['admins'] = [];
                             file_put_contents("data.json", json_encode($data));
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => "لیست ادمین خالی شد !"
                             ]);
@@ -215,13 +264,13 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                     $txxxt .= "$counter: <code>$k</code><br>";
                                     $counter++;
                                 }
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'       => $chatID,
                                     'message'    => $txxxt,
                                     'parse_mode' => 'html'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => "ادمینی وجود ندارد !"
                                 ]);
@@ -231,13 +280,13 @@ class EventHandler extends \danog\MadelineProto\EventHandler
 
                     if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
                         if ($msg === '/restart') {
-                            yield $MadelineProto->messages->deleteHistory([
+                            yield $this->messages->deleteHistory([
                                 'just_clear' => true,
                                 'revoke'     => true,
                                 'peer'       => $chatID,
-                                'max_id'     => $msg_id
+                                'max_id'     => $msgID
                             ]);
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => '♻️ ربات دوباره راه اندازی شد.'
                             ]);
@@ -245,26 +294,26 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if ($msg === 'پاکسازی') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => 'لطفا کمی صبر کنید ...'
                             ]);
-                            $all = yield $MadelineProto->get_dialogs();
+                            $all = yield $this->get_dialogs();
                             foreach ($all as $peer) {
-                                $type = yield $MadelineProto->get_info($peer);
-                                if ($type['type'] === 'supergroup') {
-                                    $info = yield $MadelineProto->channels->getChannels([
+                                $peerType = yield $this->get_info($peer);
+                                if ($peerType['type'] === 'supergroup') {
+                                    $subgroupInfo = yield $this->channels->getChannels([
                                         'id' => [$peer]
                                     ]);
-                                    @$banned = $info['chats'][0]['banned_rights']['send_messages'];
+                                    @$banned = $subgroupInfo['chats'][0]['banned_rights']['send_messages'];
                                     if ($banned == 1) {
-                                        yield $MadelineProto->channels->leaveChannel([
+                                        yield $this->channels->leaveChannel([
                                             'channel' => $peer
                                         ]);
                                     }
                                 }
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => '✅ پاکسازی باموفقیت انجام شد.'.
                                              '♻️ گروه هایی که در آنها بن شده بودم حذف شدند.'
@@ -274,50 +323,45 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         if ($msg == 'انلاین' ||
                             $msg == 'تبچی' || $msg == '!ping' || $msg == '#ping' || $msg == 'ربات' ||
                             $msg == 'ping' || $msg == '/ping') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
-                                'reply_to_msg_id' => $msg_id,
+                                'reply_to_msg_id' => $msgID,
                                 'message'         => "[🦅 Crow Tabchi ✅](tg://user?id=$userID)",
                                 'parse_mode'      => 'markdown'
                             ]);
                         }
 
                         if ($msg == 'ورژن ربات') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
-                                'reply_to_msg_id' => $msg_id,
+                                'reply_to_msg_id' => $msgID,
                                 'message'         => '**⚙️ نسخه سورس تبچی : 6.6**',
                                 'parse_mode'      => 'MarkDown'
                             ]);
                         }
 
                         if ($msg == 'شناسه' || $msg == 'id' || $msg == 'ایدی' || $msg == 'مشخصات') {
-                            $name = $me['first_name'];
-                            $phone = '+' . $me['phone'];
-                            yield $MadelineProto->messages->sendMessage([
+                            //$name  = $me['first_name'];
+                            //$phone = '+' . $me['phone'];
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
-                                'reply_to_msg_id' => $msg_id,
-                                'message'         =>
-"💚 مشخصات من
-
-👑 ادمین‌اصلی: [self::ADMIN](tg://user?id=self::ADMIN)
-👤 نام: $name
-#⃣ ایدی‌عددیم: `$me_id`
-📞 شماره‌تلفنم: `$phone`
-",
-                                'parse_mode' => 'MarkDown'
+                                'reply_to_msg_id' => $msgID,
+                                'message'         => "💚 مشخصات من<br>".
+                                                     "<br>".
+                                                     "👑 ادمین‌اصلی: [self::ADMIN](tg://user?id=self::ADMIN)<br>".
+                                                     "👤 نام: $firstName<br>".
+                                                     "#⃣ ایدی‌عددیم: <code>$meID</code><br>".
+                                                     "📞 شماره‌تلفنم: <code>$phone</code><br>".
+                                                     "<br>",
+                                'parse_mode' => 'HTML'
                             ]);
                         }
 
                         if ($msg == 'امار' || $msg == 'آمار' || $msg == 'stats') {
-                            //$day = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60 / 24;
-                            //$day = round($day, 0);
-                            //$hour = (2505600 - (time() - filectime('update-session/session.madeline'))) / 60 / 60;
-                            //$hour = round($hour, 0);
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'لطفا کمی صبر کنید...',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
                             $mem_using = round((memory_get_usage() / 1024) / 1024, 0) . 'MB';
                             $sat = $data['autochat']['on'];
@@ -328,7 +372,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             }
                             $mem_total = 'NoAccess!';
                             $CpuCores  = 'NoAccess!';
-                            try {
+                            //try {
                                 if (strpos(@$_SERVER['SERVER_NAME'], '000webhost') === false) {
                                     if (strpos(PHP_OS, 'L') !== false || strpos(PHP_OS, 'l') !== false) {
                                         $a = file_get_contents("/proc/meminfo");
@@ -344,9 +388,9 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                     }
                                     if (strpos(PHP_OS, 'L') !== false || strpos(PHP_OS, 'l') !== false) {
                                         $a = file_get_contents("/proc/cpuinfo");
-                                        @$b = explode('cpu cores', "$a")[1];
-                                        @$b = explode("\n", "$b")[0];
-                                        @$b = explode(': ', "$b")[1];
+                                        /*@*/$b = explode('cpu cores', "$a")[1];
+                                        /*@*/$b = explode("\n", "$b")[0];
+                                        /*@*/$b = explode(': ', "$b")[1];
                                         if ($b != 0 && $b != '') {
                                             $CpuCores = $b;
                                         } else {
@@ -356,15 +400,15 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                         $CpuCores = 'NoAccess!';
                                     }
                                 }
-                            } catch (Exception $f) {
-                            }
-                            $s        = yield $MadelineProto->get_dialogs();
+                            //} catch (Exception $f) {
+                            //}
+                            $s        = yield $this->get_dialogs();
                             $m        = json_encode($s, JSON_PRETTY_PRINT);
                             $supergps = count(explode('peerChannel', $m));
-                            $pvs      = count(explode('peerUser', $m));
-                            $gps      = count(explode('peerChat', $m));
+                            $pvs      = count(explode('peerUser',    $m));
+                            $gps      = count(explode('peerChat',    $m));
                             $all      = $gps + $supergps + $pvs;
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' =>"📊 Stats OghabTabchi :<br>".
                                             "<br>".
@@ -387,125 +431,125 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                             "♻️ MemUsage by this bot : $mem_using"
                             ]);
                             if ($supergps > 400 || $pvs > 1500) {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' =>
-'⚠️ اخطار: به دلیل کم بودن منابع هاست تعداد گروه ها نباید بیشتر از 400 و تعداد پیوی هاهم نباید بیشتراز 1.5K باشد.
-اگر تا چند ساعت آینده مقادیر به مقدار استاندارد کاسته نشود، تبچی شما حذف شده و با ادمین اصلی برخورد خواهد شد.'
+                                                '⚠️ اخطار: به دلیل کم بودن منابع هاست تعداد گروه ها نباید بیشتر از 400 و تعداد پیوی هاهم نباید بیشتراز 1.5K باشد.'.
+                                                'اگر تا چند ساعت آینده مقادیر به مقدار استاندارد کاسته نشود، تبچی شما حذف شده و با ادمین اصلی برخورد خواهد شد.'
                                 ]);
                             }
                         }
                         if ($msg == 'help' || $msg == '/help' || $msg == 'Help' || $msg == 'راهنما') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' =>
-'⁉️ راهنماے تبچے کلاغ :
-
-`انلاین`
-✅ دریافت وضعیت ربات
-——————
-`امار`
-📊 دریافت آمار گروه ها و کاربران
-——————
-`/addall ` [UserID]
-⏬ ادد کردن یڪ کاربر به همه گروه ها
-——————
-`/addpvs ` [IDGroup]
-⬇️ ادد کردن همه ے افرادے که در پیوے هستن به یڪ گروه
-——————
-`f2all ` [reply]
-〽️ فروارد کردن پیام ریپلاے شده به همه گروه ها و کاربران
-——————
-`f2pv ` [reply]
-🔆 فروارد کردن پیام ریپلاے شده به همه کاربران
-——————
-`f2gps ` [reply]
-🔊 فروارد کردن پیام ریپلاے شده به همه گروه ها
-——————
-`f2sgps ` [reply]
-🌐 فروارد کردن پیام ریپلاے شده به همه سوپرگروه ها
-——————
-`/setFtime ` [reply],[time-min]
-♻️ فعالسازے فروارد خودکار زماندار
-——————
-`/delFtime`
-🌀 حذف فروارد خودکار زماندار
-——————
-`/SetId` [text]
-⚙ تنظیم نام کاربرے (آیدے)ربات
-——————
-`/profile ` [نام] | [فامیل] | [بیوگرافی]
-💎 تنظیم نام اسم ,فامےلو بیوگرافے ربات
-——————
-`/join ` [@ID] or [LINK]
-🎉 عضویت در یڪ کانال یا گروه
-——————
-`ورژن ربات`
-📜 نمایش نسخه سورس تبچے شما
-——————
-`پاکسازی`
-📮 خروج از گروه هایے که مسدود کردند
-——————
-🆔 `مشخصات`
-📎 دریافت ایدی‌عددے ربات تبچی
-——————
-`/delchs`
-🥇خروج از همه ے کانال ها
-——————
-`/delgroups`
-🥇خروج از همه ے گروه ها
-——————
-`/setPhoto ` [link]
-📸 اپلود عکس پروفایل جدید
-——————
-`/autochat ` [on] or [off]
-🎖 فعال یا خاموش کردن چت خودکار (پیوی و گروه ها)
-
-≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈
-
-📌️ این دستورات فقط براے ادمین اصلے قابل استفاده هستند :
-`/addadmin ` [ایدی‌عددی]
-➕ افزودن ادمین جدید
-——————
-`/deladmin ` [ایدی‌عددی]
-➖ حذف ادمین
-——————
-`/clean admins`
-✖️ حذف همه ادمین ها
-——————
-`/adminlist`
-📃 لیست همه ادمین ها',
+                                            "⁉️ راهنماے تبچے کلاغ :<br>".
+                                            "<br>".
+                                            "`انلاین`<br>".
+                                            "✅ دریافت وضعیت ربات<br>".
+                                            "——————<br>".
+                                            "`امار`<br>".
+                                            "📊 دریافت آمار گروه ها و کاربران<br>".
+                                            "——————<br>".
+                                            "`/addall ` [UserID]<br>".
+                                            "⏬ ادد کردن یڪ کاربر به همه گروه ها<br>".
+                                            "——————<br>".
+                                            "`/addpvs ` [IDGroup]<br>".
+                                            "⬇️ ادد کردن همه ے افرادے که در پیوے هستن به یڪ گروه<br>".
+                                            "——————<br>".
+                                            "`f2all ` [reply]<br>".
+                                            "〽️ فروارد کردن پیام ریپلاے شده به همه گروه ها و کاربران<br>".
+                                            "——————<br>".
+                                            "`f2pv ` [reply]<br>".
+                                            "🔆 فروارد کردن پیام ریپلاے شده به همه کاربران<br>".
+                                            "——————<br>".
+                                            "`f2gps ` [reply]<br>".
+                                            "🔊 فروارد کردن پیام ریپلاے شده به همه گروه ها<br>".
+                                            "——————<br>".
+                                            "`f2sgps ` [reply]<br>".
+                                            "🌐 فروارد کردن پیام ریپلاے شده به همه سوپرگروه ها<br>".
+                                            "——————<br>".
+                                            "`/setFtime ` [reply],[time-min]<br>".
+                                            "♻️ فعالسازے فروارد خودکار زماندار<br>".
+                                            "——————<br>".
+                                            "`/delFtime`<br>".
+                                            "🌀 حذف فروارد خودکار زماندار<br>".
+                                            "——————<br>".
+                                            "`/SetId` [text]<br>".
+                                            "⚙ تنظیم نام کاربرے (آیدے)ربات<br>".
+                                            "——————<br>".
+                                            "`/profile ` [نام] | [فامیل] | [بیوگرافی]<br>".
+                                            "💎 تنظیم نام اسم ,فامےلو بیوگرافے ربات<br>".
+                                            "——————<br>".
+                                            "`/join ` [@ID] or [LINK]<br>".
+                                            "🎉 عضویت در یڪ کانال یا گروه<br>".
+                                            "——————<br>".
+                                            "`ورژن ربات`<br>".
+                                            "📜 نمایش نسخه سورس تبچے شما<br>".
+                                            "——————<br>".
+                                            "`پاکسازی`<br>".
+                                            "📮 خروج از گروه هایے که مسدود کردند<br>".
+                                            "——————<br>".
+                                            "🆔 `مشخصات`<br>".
+                                            "📎 دریافت ایدی‌عددے ربات تبچی<br>".
+                                            "——————<br>".
+                                            "`/delchs`<br>".
+                                            "🥇خروج از همه ے کانال ها<br>".
+                                            "——————<br>".
+                                            "`/delgroups`<br>".
+                                            "🥇خروج از همه ے گروه ها<br>".
+                                            "——————<br>".
+                                            "`/setPhoto ` [link]<br>".
+                                            "📸 اپلود عکس پروفایل جدید<br>".
+                                            "——————<br>".
+                                            "`/autochat ` [on] or [off]<br>".
+                                            "🎖 فعال یا خاموش کردن چت خودکار (پیوی و گروه ها)<br>".
+                                            "<br>".
+                                            "≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈<br>".
+                                            "<br>".
+                                            "📌️ این دستورات فقط براے ادمین اصلے قابل استفاده هستند :<br>".
+                                            "`/addadmin ` [ایدی‌عددی]<br>".
+                                            "➕ افزودن ادمین جدید<br>".
+                                            "——————<br>".
+                                            "`/deladmin ` [ایدی‌عددی]<br>".
+                                            "➖ حذف ادمین<br>".
+                                            "——————<br>".
+                                            "`/clean admins`<br>".
+                                            "✖️ حذف همه ادمین ها<br>".
+                                            "——————<br>".
+                                            "<code>/adminlist`<br>".
+                                            "📃 لیست همه ادمین ها",
                                 'parse_mode' => 'markdown'
                             ]);
                         }
 
                         if ($msg == 'F2all' || $msg == 'f2all') {
-                            if ($type2 == 'supergroup') {
-                                yield $MadelineProto->messages->sendMessage([
+                            if ($type == 'supergroup') {
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '⛓ درحال فروارد ...'
                                 ]);
                                 $rid = $update['message']['reply_to_msg_id'];
-                                $dialogs = yield $MadelineProto->get_dialogs();
+                                $dialogs = yield $this->get_dialogs();
                                 foreach ($dialogs as $peer) {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    if ($type['type'] == 'supergroup' ||
-                                        $type['type'] == 'user' ||
-                                        $type['type'] == 'chat')
+                                    $peerType = yield $this->get_info($peer);
+                                    if ($peerType['type'] == 'supergroup' ||
+                                        $peerType['type'] == 'user' ||
+                                        $peerType['type'] == 'chat')
                                     {
-                                        $MadelineProto->messages->forwardMessages([
+                                        $this->messages->forwardMessages([
                                             'from_peer' => $chatID,
                                             'to_peer'   => $peer,
                                             'id'        => [$rid]
                                         ]);
                                     }
                                 }
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => 'فروارد همگانی با موفقیت به همه ارسال شد 👌🏻'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '‼از این دستور فقط در سوپرگروه میتوانید استفاده کنید.'
                                 ]);
@@ -513,29 +557,29 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if ($msg == 'F2pv' || $msg == 'f2pv') {
-                            if ($type2 == 'supergroup') {
-                                yield $MadelineProto->messages->sendMessage([
+                            if ($type == 'supergroup') {
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '⛓ درحال فروارد ...'
                                 ]);
                                 $rid = $update['message']['reply_to_msg_id'];
-                                $dialogs = yield $MadelineProto->get_dialogs();
+                                $dialogs = yield $this->get_dialogs();
                                 foreach ($dialogs as $peer) {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    if ($type['type'] == 'user') {
-                                        $MadelineProto->messages->forwardMessages([
+                                    $peerType = yield $this->get_info($peer);
+                                    if ($peerType['type'] == 'user') {
+                                        $this->messages->forwardMessages([
                                             'from_peer' => $chatID,
                                             'to_peer'   => $peer,
                                             'id'        => [$rid]
                                         ]);
                                     }
                                 }
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => 'فروارد همگانی با موفقیت به پیوی ها ارسال شد 👌🏻'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '‼از این دستور فقط در سوپرگروه میتوانید استفاده کنید.'
                                 ]);
@@ -543,28 +587,28 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if ($msg == 'F2gps' || $msg == 'f2gps') {
-                            if ($type2 == 'supergroup') {
-                                yield $MadelineProto->messages->sendMessage([
+                            if ($type == 'supergroup') {
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '⛓ درحال فروارد ...'
                                 ]);
                                 $rid = $update['message']['reply_to_msg_id'];
-                                $dialogs = yield $MadelineProto->get_dialogs();
+                                $dialogs = yield $this->get_dialogs();
                                 foreach ($dialogs as $peer) {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    if ($type['type'] == 'chat') {
-                                        $MadelineProto->messages->forwardMessages([
+                                    $peerType = yield $this->get_info($peer);
+                                    if ($peerType['type'] == 'chat') {
+                                        $this->messages->forwardMessages([
                                             'from_peer' => $chatID,
                                             'to_peer'   => $peer, 'id' => [$rid]
                                         ]);
                                     }
                                 }
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => 'فروارد همگانی با موفقیت به گروه ها ارسال شد👌🏻'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '‼از این دستور فقط در سوپرگروه میتوانید استفاده کنید.'
                                 ]);
@@ -572,111 +616,81 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if ($msg == 'F2sgps' || $msg == 'f2sgps') {
-                            if ($type2 == 'supergroup') {
-                                yield $MadelineProto->messages->sendMessage([
+                            if ($type == 'supergroup') {
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '⛓ درحال فروارد ...'
                                 ]);
                                 $rid = $update['message']['reply_to_msg_id'];
-                                $dialogs = yield $MadelineProto->get_dialogs();
+                                $dialogs = yield $this->get_dialogs();
                                 foreach ($dialogs as $peer) {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    if ($type['type'] == 'supergroup') {
-                                        $MadelineProto->messages->forwardMessages([
+                                    $peerType = yield $this->get_info($peer);
+                                    if ($peerType['type'] == 'supergroup') {
+                                        $this->messages->forwardMessages([
                                             'from_peer' => $chatID,
                                             'to_peer'   => $peer,
                                             'id'        => [$rid]]);
                                     }
                                 }
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => 'فروارد همگانی با موفقیت به سوپرگروه ها ارسال شد 👌🏻'
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '‼از این دستور فقط در سوپرگروه میتوانید استفاده کنید.'
                                 ]);
                             }
                         }
-                        /* Was originally commented:
-                        if (strpos($msg, 's2sgps ') !== false) {
-                            $TXT = explode('s2sgps ', $msg)[1];
-                            yield $MadelineProto->messages->sendMessage([
-                                'peer'    => $chatID,
-                                'message' => '⛓ درحال ارسال ...'
-                            ]);
-                            $count = 0;
-                            $dialogs = yield $MadelineProto->get_dialogs();
-                            foreach ($dialogs as $peer) {
-                                try {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    $type3 = $type['type'];
-                                } catch (Exception $r) {
-                                }
-                                if ($type3 == 'supergroup') {
-                                    yield $MadelineProto->messages->sendMessage([
-                                        'peer'    => $peer,
-                                        'message' => "$TXT"
-                                    ]);
-                                    $count++;
-                                    file_put_contents('count.txt', $count);
-                                }
-                            }
-                            yield $MadelineProto->messages->sendMessage([
-                                'peer'    => $chatID,
-                                'message' => 'ارسال همگانی با موفقیت به سوپرگروه ها ارسال شد 🙌🏻'
-                            ]);
-                        }
-                        */
 
                         if ($msg == '/delFtime') {
                             foreach (glob("ForTime/*") as $files) {
                                 unlink("$files");
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID, 'message' => '➖ Removed !',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
                         }
 
                         if ($msg == 'delchs' || $msg == '/delchs') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'لطفا کمی صبر کنید...',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
-                            $all = yield $MadelineProto->get_dialogs();
+                            $all = yield $this->get_dialogs();
                             foreach ($all as $peer) {
-                                $type  = yield $MadelineProto->get_info($peer);
-                                $type3 = $type['type'];
+                                $peerType  = yield $this->get_info($peer);
+                                $type3 = $peerType['type'];
                                 if ($type3 == 'channel') {
-                                    $id = $type['bot_api_id'];
-                                    yield $MadelineProto->channels->leaveChannel(['channel' => $id]);
+                                    $id = $peerType['bot_api_id'];
+                                    yield $this->channels->leaveChannel(['channel' => $id]);
                                 }
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'از همه ی کانال ها لفت دادم 👌',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
                         }
 
                         if ($msg == 'delgroups' || $msg == '/delgroups') {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'لطفا کمی صبر کنید...',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
-                            $all = yield $MadelineProto->get_dialogs();
+                            $all = yield $this->get_dialogs();
                             foreach ($all as $peer) {
                                 try {
-                                    $type  = yield $MadelineProto->get_info($peer);
-                                    $type3 = $type['type'];
+                                    $peerType  = yield $this->get_info($peer);
+                                    $type3 = $peerType['type'];
                                     if ($type3 == 'supergroup' || $type3 == 'chat') {
-                                        $id = $type['bot_api_id'];
+                                        $id = $peerType['bot_api_id'];
                                         if ($chatID != $id) {
-                                            yield $MadelineProto->channels->leaveChannel([
+                                            yield $this->channels->leaveChannel([
                                                 'channel' => $id
                                             ]);
                                         }
@@ -684,10 +698,10 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                 } catch (Exception $m) {
                                 }
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'از همه ی گروه ها لفت دادم 👌',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
                         }
 
@@ -696,16 +710,16 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             $data['autochat']['on'] = "$m[2]";
                             file_put_contents("data.json", json_encode($data));
                             if ($m[2] == 'on') {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '🤖 حالت چت خودکار روشن شد ✅',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '🤖 حالت چت خودکار خاموش شد ❌',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             }
                         }
@@ -714,20 +728,20 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             preg_match("/^[\/\#\!]?(join) (.*)$/i", $msg, $text);
                             $id = $text[2];
                             try {
-                                yield $MadelineProto->channels->joinChannel([
+                                yield $this->channels->joinChannel([
                                     'channel' => "$id"
                                 ]);
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '✅ Joined',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             } catch (Exception $e) {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '❗️<code>' . $e->getMessage() . '</code>',
                                     'parse_mode'      => 'html',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             }
                         }
@@ -735,16 +749,16 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             preg_match("/^[\/\#\!]?(SetId) (.*)$/i", $msg, $text);
                             $id = $text[2];
                             try {
-                                $User = yield $MadelineProto->account->updateUsername([
+                                $User = yield $this->account->updateUsername([
                                     'username' => "$id"
                                 ]);
                             } catch (Exception $v) {
-                                $MadelineProto->messages->sendMessage([
+                                $this->messages->sendMessage([
                                     'peer'    => $chatID,
                                     'message' => '❗' . $v->getMessage()
                                 ]);
                             }
-                            $MadelineProto->messages->sendMessage([
+                            $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => "• نام کاربری جدید برای ربات تنظیم شد :<br>@$id"
                             ]);
@@ -755,12 +769,12 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             $id1 = trim($ip[0]);
                             $id2 = trim($ip[1]);
                             $id3 = trim($ip[2]);
-                            yield $MadelineProto->account->updateProfile([
+                            yield $this->account->updateProfile([
                                 'first_name' => "$id1",
                                 'last_name'  => "$id2",
                                 'about'      => "$id3"
                             ]);
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer' => $chatID,
                                 'message' => "🔸نام جدید تبچی: $id1<br>".
                                              "🔹نام خانوادگی جدید تبچی: $id2".
@@ -769,24 +783,24 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
 
                         if (strpos($msg, 'addpvs ') !== false) {
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => ' ⛓درحال ادد کردن ...'
                             ]);
                             $gpid = explode('addpvs ', $msg)[1];
-                            $dialogs = yield $MadelineProto->get_dialogs();
+                            $dialogs = yield $this->get_dialogs();
                             foreach ($dialogs as $peer) {
-                                $type = yield $MadelineProto->get_info($peer);
-                                $type3 = $type['type'];
+                                $peerType = yield $this->get_info($peer);
+                                $type3 = $peerType['type'];
                                 if ($type3 == 'user') {
-                                    $pvid = $type['user_id'];
-                                    $MadelineProto->channels->inviteToChannel([
+                                    $pvid = $peerType['user_id'];
+                                    $this->channels->inviteToChannel([
                                         'channel' => $gpid,
                                         'users'   => [$pvid]
                                     ]);
                                 }
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'    => $chatID,
                                 'message' => "همه افرادی که در پیوی بودند را در گروه $gpid ادد کردم 👌🏻"
                             ]);
@@ -794,22 +808,22 @@ class EventHandler extends \danog\MadelineProto\EventHandler
 
                         if (preg_match("/^[#\!\/](addall) (.*)$/", $msg)) {
                             preg_match("/^[#\!\/](addall) (.*)$/", $msg, $text1);
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'            => $chatID,
                                 'message'         => 'لطفا کمی صبر کنید...',
-                                'reply_to_msg_id' => $msg_id
+                                'reply_to_msg_id' => $msgID
                             ]);
                             $user = $text1[2];
-                            $dialogs = yield $MadelineProto->get_dialogs();
+                            $dialogs = yield $this->get_dialogs();
                             foreach ($dialogs as $peer) {
                                 try {
-                                    $type = yield $MadelineProto->get_info($peer);
-                                    $type3 = $type['type'];
+                                    $peerType = yield $this->get_info($peer);
+                                    $type3 = $peerType['type'];
                                 } catch (Exception $d) {
                                 }
                                 if ($type3 == 'supergroup') {
                                     try {
-                                        yield $MadelineProto->channels->inviteToChannel([
+                                        yield $this->channels->inviteToChannel([
                                             'channel' => $peer,
                                             'users'   => ["$user"]
                                         ]);
@@ -817,7 +831,7 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                     }
                                 }
                             }
-                            yield $MadelineProto->messages->sendMessage([
+                            yield $this->messages->sendMessage([
                                 'peer'       => $chatID,
                                 'message'    => "کاربر **$user** توی همه ی ابرگروه ها ادد شد ✅",
                                 'parse_mode' => 'MarkDown'
@@ -828,29 +842,29 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             preg_match("/^[#\!\/](setPhoto) (.*)$/", $msg, $text1);
                             if (strpos($text1[2], '.jpg') !== false || strpos($text1[2], '.png') !== false) {
                                 copy($text1[2], 'photo.jpg');
-                                yield $MadelineProto->photos->updateProfilePhoto([
+                                yield $this->photos->updateProfilePhoto([
                                     'id' => 'photo.jpg'
                                 ]);
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '📸 عکس پروفایل جدید باموفقیت ست شد.',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             } else {
-                                yield $MadelineProto->messages->sendMessage([
+                                yield $this->messages->sendMessage([
                                     'peer'            => $chatID,
                                     'message'         => '❌ فایل داخل لینک عکس نمیباشد!',
-                                    'reply_to_msg_id' => $msg_id
+                                    'reply_to_msg_id' => $msgID
                                 ]);
                             }
                         }
 
                         if (preg_match("/^[#\!\/](setFtime) (.*)$/", $msg)) {
                             if (isset($update['message']['reply_to_msg_id'])) {
-                                if ($type2 == 'supergroup') {
+                                if ($type == 'supergroup') {
                                     preg_match("/^[#\!\/](setFtime) (.*)$/", $msg, $text1);
                                     if ($text1[2] < 30) {
-                                        yield $MadelineProto->messages->sendMessage([
+                                        yield $this->messages->sendMessage([
                                             'peer'       => $chatID,
                                             'message'    => '**❗️خطا: عدد وارد شده باید بیشتر از 30 دقیقه باشد.**',
                                             'parse_mode' => 'MarkDown'
@@ -863,14 +877,14 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                                         file_put_contents("ForTime/msgid.txt", $update['message']['reply_to_msg_id']);
                                         file_put_contents("ForTime/chatid.txt", $chatID);
                                         file_put_contents("ForTime/time.txt", $time);
-                                        yield $MadelineProto->messages->sendMessage([
+                                        yield $this->messages->sendMessage([
                                             'peer'            => $chatID,
                                             'message'         => "✅ فروارد زماندار باموفقیت روی این پُست درهر $text1[2] دقیقه تنظیم شد.",
                                             'reply_to_msg_id' => $update['message']['reply_to_msg_id']
                                         ]);
                                     }
                                 } else {
-                                    yield $MadelineProto->messages->sendMessage([
+                                    yield $this->messages->sendMessage([
                                         'peer'    => $chatID,
                                         'message' => '‼از این دستور فقط در سوپرگروه میتوانید استفاده کنید.'
                                     ]);
@@ -879,18 +893,18 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
                     }
 
-                    if ($type2 != 'channel' && @$data['autochat']['on'] == 'on' && rand(0, 2000) == 1) {
-                        yield $MadelineProto->sleep(4);
+                    if ($type != 'channel' && @$data['autochat']['on'] == 'on' && rand(0, 2000) == 1) {
+                        yield $this->sleep(4);
 
-                        if ($type2 == 'user') {
-                            yield $MadelineProto->messages->readHistory([
+                        if ($type == 'user') {
+                            yield $this->messages->readHistory([
                                 'peer'   => $userID,
-                                'max_id' => $msg_id
+                                'max_id' => $msgID
                             ]);
-                            yield $MadelineProto->sleep(2);
+                            yield $this->sleep(2);
                         }
 
-                        yield $MadelineProto->messages->setTyping([
+                        yield $this->messages->setTyping([
                             'peer'   => $chatID,
                             'action' => ['_' => 'sendMessageTypingAction']
                         ]);
@@ -898,8 +912,8 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         $crow = array('❄️😐', '🍂😐', '😂😐', '😐😐😐😐', '😕', '😎💄', ':/',
                                       '😂❤️', '🤦🏻‍♀🤦🏻‍♀🤦🏻‍♀', '🚶🏻‍♀🚶🏻‍♀🚶🏻‍♀', '🎈😐', 'شعت 🤐', '🥶');
                         $texx = $crow[rand(0, count($crow) - 1)];
-                        yield $MadelineProto->sleep(1);
-                        yield $MadelineProto->messages->sendMessage([
+                        yield $this->sleep(1);
+                        yield $this->messages->sendMessage([
                             'peer'    => $chatID,
                             'message' => "$texx"
                         ]);
@@ -910,11 +924,11 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                             $tt = file_get_contents('ForTime/time.txt');
                             unlink('ForTime/time.txt');
                             file_put_contents('ForTime/time.txt', $tt);
-                            $dialogs = yield $MadelineProto->get_dialogs();
+                            $dialogs = yield $this->get_dialogs();
                             foreach ($dialogs as $peer) {
-                                $type = yield $MadelineProto->get_info($peer);
-                                if ($type['type'] == 'supergroup' || $type['type'] == 'chat') {
-                                    $MadelineProto->messages->forwardMessages([
+                                $peerType = yield $this->get_info($peer);
+                                if ($peerType['type'] == 'supergroup' || $peerType['type'] == 'chat') {
+                                    $this->messages->forwardMessages([
                                         'from_peer' => file_get_contents('ForTime/chatid.txt'),
                                         'to_peer'   => $peer,
                                         'id'        => [file_get_contents('ForTime/msgid.txt')]
@@ -924,31 +938,30 @@ class EventHandler extends \danog\MadelineProto\EventHandler
                         }
                     }
                     if ($userID === self::ADMIN || isset($data['admins'][$userID])) {
-                        yield $MadelineProto->messages->deleteHistory([
+                        yield $this->messages->deleteHistory([
                             'just_clear' => true,
                             'revoke'     => false,
                             'peer'       => $chatID,
-                            'max_id'     => $msg_id
+                            'max_id'     => $msgID
                         ]);
                     }
-                    /*
                     if ($userID === self::ADMIN) {
                         if (!file_exists('true') && file_exists('session.madeline') &&
                             filesize('session.madeline') / 1024 <= 4000)
                         {
-                            file_put_contents('true', '');
-                            yield $MadelineProto->sleep(3);
-                            copy('session.madeline', 'update-session/session.madeline');
+                            //file_put_contents('true', '');
+                            yield $this->sleep(3);
+                            //copy('session.madeline', 'update-session/session.madeline');
                         }
                     }
-                    */
                 }
             }
-        } catch (Exception $e) {
+        //}
+        //catch (Exception $e) {
             // $a = fopen('trycatch.txt', 'a') || die("Unable to open file!");
             // fwrite($a, "Error: ".$e->getMessage().PHP_EOL."Line: ".$e->getLine().PHP_EOL."- - - - -".PHP_EOL);
             // fclose($a);
-        }
+        //}
     }
 }
 
@@ -961,12 +974,12 @@ $settings['serialization']['cleanup_before_serialization'] = true;
 $settings['app_info']['api_id']   = $GLOBALS["API_ID"];   // 839407;
 $settings['app_info']['api_hash'] = $GLOBALS["API_HASH"]; // '0a310f9d03f51e8aa00d9262ef55d62e';
 
-$MadelineProto = new API('session.madeline', $settings);
-$MadelineProto->async(true);
+$mp = new API('session.madeline', $settings);
+$mp->async(true);
 
-$MadelineProto->loop(function () use ($MadelineProto) {
-    yield $MadelineProto->start();
-    yield $MadelineProto->setEventHandler('\EventHandler');
+$mp->loop(function () use ($mp) {
+    yield $mp->start();
+    yield $mp->setEventHandler('\EventHandler');
 });
 
-$MadelineProto->loop();
+$mp->loop();
