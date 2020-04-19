@@ -1,8 +1,9 @@
 <?php
 
-ini_set('error_logs', 'off');
-error_reporting(0);
+//ini_set('error_logs', 'off');
+//error_reporting(0);
 @date_default_timezone_set('Asia/Tehran');
+
 /*===========================*/
 if (is_dir("data") === false) {
     @mkdir("data");
@@ -72,12 +73,13 @@ if (file_exists("MadelineProto.log") == true) {
         @touch("MadelineProto.log");
     }
 }
+
 /*===========================*/
 if (file_exists('madeline.php') == false) {
     copy('https://phar.madelineproto.xyz/madeline.php', 'madeline.php');
 }
-define('MADELINE_BRANCH', '');
 include 'madeline.php';
+
 /*===========================*/
 /*
 function closeConnection($message = 'rmsg running ...'){
